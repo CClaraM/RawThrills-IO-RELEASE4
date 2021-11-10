@@ -1,0 +1,651 @@
+'****************************************************************
+'*  Name    : UNTITLED.BAS                                      *
+'*  Author  : [select VIEW...EDITOR OPTIONS]                    *
+'*  Notice  : Copyright (c) 2019 [select VIEW...EDITOR OPTIONS] *
+'*          : All Rights Reserved                               *
+'*  Date    : 29/04/2019                                        *
+'*  Version : 1.0                                               *
+'*  Notes   :                                                   *
+'*          :                                                   *
+'****************************************************************
+#CONFIG
+    CONFIG  PLLDIV = 5            ; Divide by 5 (20 MHz oscillator input)
+    CONFIG  CPUDIV = OSC1_PLL2	  ;[Primary Oscillator Src: /1][96 MHz PLL Src: /2]
+    CONFIG  USBDIV = 2            ; USB clock source comes from the 96 MHz PLL divided by 2
+    CONFIG  FOSC = ECIO_EC	      ; EC oscillator, port function on RA6 (ECIO)
+    CONFIG  FCMEN = OFF           ; Fail-Safe Clock Monitor disabled
+    CONFIG  IESO = OFF            ; Oscillator Switchover mode disabled
+    CONFIG  PWRT = OFF            ; PWRT disabled
+    CONFIG  BOR = ON              ; Brown-out Reset enabled in hardware only (SBOREN is disabled)
+    CONFIG  VREGEN = ON           ; USB voltage regulator enabled
+    CONFIG  WDT = ON              ; WDT enabled
+    CONFIG  WDTPS = 512           ; 1:512
+    CONFIG  PBADEN = OFF          ; PORTB<4:0> pins are configured as digital I/O on Reset
+    CONFIG  LPT1OSC = OFF         ; Timer1 configured for higher power operation
+    CONFIG  MCLRE = OFF	          ; RE3 input pin enabled; MCLR pin disabled
+    CONFIG  STVREN = ON           ; Stack full/underflow will cause Reset
+    CONFIG  LVP = OFF             ; Single-Supply ICSP disabled
+    CONFIG  ICPRT = ON            ; ICPORT enabled
+    CONFIG CP0 = OFF               ;Block 0 (000800-001FFFh) or (001000-001FFFh) is code-protected
+    CONFIG CP1 = OFF	    ;Block 1 (002000-003FFFh) is code-protected
+    CONFIG CP2 = OFF
+    CONFIG CP3 = OFF
+    CONFIG CPB = OFF	    ;Boot block (000000-0007FFh) or (000000-000FFFh) is code-protected
+    
+#ENDCONFIG
+
+' include the HID descriptor
+include	"R4_desc.bas"
+
+DEFINE OSC 48
+
+Define ADC_BITS     12  ' Set number of bits in result
+Define ADC_CLOCK     3  ' Set clock source (3=rc)
+Define ADC_SAMPLEUS 50  ' Set sampling time in uS
+'********************************
+USBBufferSizeTX    con 4  ' output
+USBBufferSizeRX    con 3  ' input
+
+'********************************
+USBBuffer        Var Byte[8]    $60' the USB buffer...
+USBBufferCount   Var Byte       $69
+BUFFIN0          var byte       $6A
+BUFFIN1          var byte       $6B
+BUFFIN2          var byte       $6C
+LOUTSTATE        var byte       $6D
+'********************************
+INPUTS0     var byte            $6E
+INPUTS1     var byte            $6F
+INPUTS2     var byte            $70
+INPUTS3     var byte            $71
+
+BINPUTS0    var byte            $72
+BINPUTS1    var byte            $73
+BINPUTS2    var byte            $74
+BINPUTS3    var byte            $75
+
+OUTPUTS0    var byte            $76
+OUTPUTS1    var byte            $77
+OUTPUTS2    var byte            $78
+OUTPUTS3    var byte            $79
+'********************************
+ANINPUT0    VAR WORD            $7A
+ANINPUT1    VAR WORD            $7C
+
+ANALOG0     var byte            $7E
+BANALOG0     var byte           $7F
+ANALOG1     var byte            $80
+BANALOG1     var byte           $81
+ANALOG2     var byte            $82
+BANALOG2     var byte           $83
+ANALOG3     var byte            $84
+BANALOG3     var byte           $85
+ANALOG4     var byte            $86
+BANALOG4     var byte           $87
+ANALOG5     var byte            $88
+BANALOG5     var byte           $89
+ANALOG6     var byte            $8A
+BANALOG6     var byte           $8B
+ANALOG7     var byte            $8C
+BANALOG7     var byte           $8D
+COUNTER     var byte            $8E
+'********************************
+KEYPRESS         var byte       $8F
+KEYS3            var byte       $90
+BKEY             var byte       $91
+VATEMP           var byte       $92
+ArCount          var word       $93
+INARC            var bit
+OP1              var bit
+OP2              var bit
+OP3              var bit
+OP4              var bit
+OPERATE          var bit
+USB_ARC          var bit
+COL0             var bit
+COL1             var bit
+COL2             var bit
+COLARC           var bit
+clear
+'********************************
+TRISA = %10100011
+ADCON1=%00001101
+ADCON2=%10000000
+TRISB=%11111111
+TRISC=%10010010
+TRISD=%11110000
+TRISE=%0111
+PORTD=0
+PORTC=%100
+PORTA.6=0
+'********************************
+'USBBuffer[0]=0
+'USBBuffer[1]=0
+'USBBuffer[2]=0
+'USBBuffer[3]=0
+'USBBuffer[4]=0
+'USBBuffer[5]=0
+'USBBuffer[6]=0
+'USBBuffer[7]=0
+
+'BUFFIN0=0
+'BUFFIN1=0
+'BUFFIN2=0
+
+INPUTS0=255
+INPUTS1=255
+INPUTS2=255
+INPUTS3=255
+
+'BINPUTS0 = INPUTS0 
+'BINPUTS1 = INPUTS1 
+'BINPUTS2 = INPUTS2 
+'BINPUTS3 = INPUTS3
+
+'OUTPUTS0=0
+'OUTPUTS1=0
+'OUTPUTS2=0
+
+'VATEMP=0
+'op1=0
+'op2=0
+'op3=0
+'op4=0
+'usb_arc=0
+'OPERATE=0
+'INARC=0
+'KEYPRESS=0
+'COUNTER=0
+'KEYS3=0
+
+low porta.6
+LOW portc.0
+gosub WOUT
+
+' ************************************************************
+' * START                            *
+' ************************************************************
+usbinit ' initialise USB...
+
+START:
+    high portc.0
+    gosub DoUSBIn
+    if inarc=1 then
+        inarc=0
+        if BUFFIN0=1 and BUFFIN1=0 and BUFFIN2=15 then           
+            gosub READIN
+            BINPUTS3=INPUTS3
+            USBBuffer[0]=4     ;ID
+            USBBuffer[1]=224   ;Code
+            USBBuffer[2]=INPUTS3   ;Data
+            USBBuffer[3]=4     ;Data
+            gosub DoUSBOut
+            KEYS3 = 207
+            goto R4IO
+        endif 
+    endif
+    
+goto start
+
+' ************************************************************
+' * MAIN LOOP                                                *
+' ************************************************************
+R4IO:
+    if COUNTER>128 then
+        high portc.0
+     else
+        low portc.0
+    endif
+        
+    if OPERATE=1 then
+        gosub READANALOG
+        Gosub LOADKEY
+                      
+        if inputs0 <> BINPUTS0 or inputs1 <> BINPUTS1 then
+            op1=1
+            BINPUTS0=INPUTS0
+            BINPUTS1=INPUTS1
+        endif
+        
+        if KEYS3 <> BKEY then
+            op2=1
+            BKEY=KEYS3
+        endif
+        
+        if inputs2 <> BINPUTS2 or analog1 <> banalog1 then
+            op2=1
+            banalog1=analog1
+            BINPUTS2=INPUTS2
+        endif
+        
+        if analog3 <> banalog3 or analog7 <> banalog7 then
+            op3=1
+            banalog3=analog3
+            banalog7=analog7
+        endif
+        
+        if INPUTS3 <> BINPUTS3 then
+            op4=1
+            BINPUTS3=INPUTS3
+        endif 
+        
+        if op1=1 then
+            op1=0
+            USBBuffer[0]=4          ;ID
+            USBBuffer[1]=128        ;Code
+            USBBuffer[2]=INPUTS0    ;Data
+            USBBuffer[3]=INPUTS1    ;Data
+            
+            gosub DoUSBOut
+        endif
+        
+        if op2=1 then
+            op2=0
+            USBBuffer[0]=4          ;ID
+            USBBuffer[1]=KEYS3      ;Code
+            USBBuffer[2]=analog1    ;Data
+            USBBuffer[3]=INPUTS2    ;Data
+            
+            gosub DoUSBOut
+        endif
+        
+        if op3=1 then
+            op3=0
+            USBBuffer[0]=4          ;ID
+            USBBuffer[1]=160        ;Code
+            USBBuffer[2]=analog3    ;Data
+            USBBuffer[3]=analog7    ;Data
+            
+            gosub DoUSBOut
+        endif
+        
+        if op4=1 then
+            op4=0
+            USBBuffer[0]=4     ;ID
+            USBBuffer[1]=224   ;Code
+            USBBuffer[2]=INPUTS3   ;Data
+            USBBuffer[3]=4     ;Data
+            
+            gosub DoUSBOut
+        endif
+               
+    endif
+    
+    gosub DoUSBIn2
+    
+    if inarc=1 then
+        inarc=0
+        if BUFFIN0=1 then
+            if BUFFIN1=16 and BUFFIN2=15 then                       
+                ;USBBufferCount = USBBufferSizeTX              ' TX buffer size
+                gosub DoUSBOut
+                OUTPUTS0=0
+                OUTPUTS1=0
+                OUTPUTS2=0
+                gosub WOUT
+                OPERATE=1
+            endif
+            
+            if BUFFIN1.0=1 and  BUFFIN2=0 then  
+                OUTPUTS0.0 = BUFFIN1.5
+                OUTPUTS0.1 = BUFFIN1.6
+                OUTPUTS0.2 = BUFFIN1.7
+                OUTPUTS0.3 = BUFFIN1.3
+                OUTPUTS0.4 = BUFFIN1.4
+                gosub WOUT
+            endif
+            
+        endif      
+    endif
+    USBService
+    COUNTER=COUNTER+1
+goto R4IO
+
+' ************************************************************
+' * 1                         *
+' ************************************************************
+
+
+' ************************************************************
+' * 1                         *
+' ************************************************************
+LOADKEY:
+    KEYPRESS = KEYPRESS + 1
+    if KEYPRESS >= 4 then KEYPRESS = 0
+    Select Case KEYPRESS
+        case 0
+            OUTPUTS1.3=1
+            OUTPUTS1.5=0
+            OUTPUTS1.7=0
+            OUTPUTS2.1=0        
+        case 1
+            OUTPUTS1.3=0
+            OUTPUTS1.5=1
+            OUTPUTS1.7=0
+            OUTPUTS2.1=0
+        case 2
+            OUTPUTS1.3=0
+            OUTPUTS1.5=0
+            OUTPUTS1.7=1
+            OUTPUTS2.1=0
+        case 3 
+            OUTPUTS1.3=0
+            OUTPUTS1.5=0
+            OUTPUTS1.7=0
+            OUTPUTS2.1=1
+    end select
+    gosub WOUT
+    gosub READIN
+    COLARC=1
+    
+    if col0=0 and COLARC=1 then
+        Select Case KEYPRESS
+        Case 0
+            KEYS3 = 192
+        Case 1
+            KEYS3 = 195
+        Case 2
+            KEYS3 = 198
+        Case 3
+            KEYS3 = 201
+        End Select
+        COLARC=0
+    endif
+    
+    if col1=0 and COLARC=1 then
+        Select Case KEYPRESS
+        Case 0
+            KEYS3 = 193
+        Case 1
+            KEYS3 = 196
+        Case 2
+            KEYS3 = 199
+        Case 3
+            KEYS3 = 202
+        End Select
+        COLARC=0
+    endif
+        
+    if col2=0 and COLARC=1 then
+        Select Case KEYPRESS
+        Case 0
+            KEYS3 = 194
+        Case 1
+            KEYS3 = 197
+        Case 2
+            KEYS3 = 200
+        Case 3
+            KEYS3 = 203
+        End Select
+        COLARC=0
+    endif
+
+    if COLARC=1 then
+        VATEMP=VATEMP+1
+    else
+        VATEMP=0
+    endif
+    
+    if VATEMP >= 11 then vatemp=0 : KEYS3 = 207
+               
+return 
+' ************************************************************
+' * receive digital from the JAMMA PORT                      *
+' ************************************************************
+READIN:
+    low PORTA.4
+    pauseus 119
+    if PORTD.4 = 1 then inputs0.4 = 1 ;R
+    if PORTD.5 = 1 then inputs0.7 = 1 ;S
+    if PORTD.6 = 1 then inputs0.2 = 1 ;T
+    if PORTD.7 = 1 then inputs0.3 = 1 ;U
+    
+    if PORTB.0 = 1 then inputs2.4 = 1 ;V
+    if PORTB.1 = 1 then inputs2.5 = 1 ;W
+    if PORTB.2 = 1 then inputs2.6 = 1 ;X
+    if PORTB.3 = 1 then inputs2.7 = 1 ;Y
+    
+    if PORTB.4 = 1 then inputs1.2 = 1 ;Z
+    if PORTB.5 = 1 then inputs1.3 = 1 ;a
+    ;if PORTB.6 = 1 then ;b
+    ;if PORTB.7 = 1 then ;c
+    
+    if PORTE.1 = 1 then INPUTS3.1 = 1 ;J4-4
+    if PORTE.0 = 1 then INPUTS3.3 = 1 ;J4-6
+    if PORTE.3 = 1 then INPUTS3.5 = 1 ;J4-8
+    if PORTE.2 = 1 then INPUTS3.7 = 1 ;d
+    
+'********************************
+    if PORTD.4 = 0 then inputs0.4 = 0 ;R
+    if PORTD.5 = 0 then inputs0.7 = 0 ;S
+    if PORTD.6 = 0 then inputs0.2 = 0 ;T
+    if PORTD.7 = 0 then inputs0.3 = 0 ;U
+     
+    if PORTB.0 = 0 then inputs2.4 = 0 ;V
+    if PORTB.1 = 0 then inputs2.5 = 0 ;W
+    if PORTB.2 = 0 then inputs2.6 = 0 ;X
+    if PORTB.3 = 0 then inputs2.7 = 0 ;Y
+    
+    if PORTB.4 = 0 then inputs1.2 = 0 ;Z
+    if PORTB.5 = 0 then inputs1.3 = 0 ;a
+    ;if PORTB.6 = 0 then ;b
+    ;if PORTB.7 = 0 then ;c
+    
+    if PORTE.1 = 0 then INPUTS3.1 = 0 ;J4-4
+    if PORTE.0 = 0 then INPUTS3.3 = 0 ;J4-6
+    if PORTE.3 = 0 then INPUTS3.5 = 0 ;J4-8
+    if PORTE.2 = 0 then INPUTS3.7 = 0 ;d
+
+    high PORTA.4
+    pauseus 119
+    if PORTD.4 = 1 then inputs0.5 = 1 ;15
+    if PORTD.5 = 1 then inputs0.0 = 1 ;16
+    if PORTD.6 = 1 then inputs0.1 = 1 ;17
+    if PORTD.7 = 1 then inputs2.0 = 1 ;18
+        
+    if PORTB.0 = 1 then inputs2.1 = 1 ;19
+    if PORTB.1 = 1 then inputs2.2 = 1 ;20
+    if PORTB.2 = 1 then inputs2.3 = 1 ;21
+    if PORTB.3 = 1 then COL0 = 1 ;22
+    
+    if PORTB.4 = 1 then COL1 = 1 ;23
+    if PORTB.5 = 1 then COL2 = 1 ;24
+    ;if PORTB.6 = 1 then ;inputs3.2 = 1
+    ;if PORTB.7 = 1 then ;inputs3.3 = 1
+    
+    if PORTE.2 = 1 then INPUTS3.0 = 1 ;J4-3
+    if PORTE.1 = 1 then INPUTS3.2 = 1 ;J4-5
+    if PORTE.0 = 1 then INPUTS3.4 = 1 ;J4-7
+    if PORTE.3 = 1 then INPUTS3.6 = 1 ;J4-9
+    
+'********************************
+    if PORTD.4 = 0 then inputs0.5 = 0 ;15
+    if PORTD.5 = 0 then inputs0.0 = 0 ;16
+    if PORTD.6 = 0 then inputs0.1 = 0 ;17
+    if PORTD.7 = 0 then inputs2.0 = 0 ;18
+                                
+    if PORTB.0 = 0 then inputs2.1 = 0 ;19
+    if PORTB.1 = 0 then inputs2.2 = 0 ;20
+    if PORTB.2 = 0 then inputs2.3 = 0 ;21
+    if PORTB.3 = 0 then COL0 = 0;22
+    
+    if PORTB.4 = 0 then COL1 = 0 ;23
+    if PORTB.5 = 0 then COL2 = 0 ;24
+    ;if PORTB.6 = 0 then ;inputs3.2 = 0
+    ;if PORTB.7 = 0 then ;inputs3.3 = 0
+    
+    if PORTE.2 = 0 then INPUTS3.0 = 0 ;J4-3
+    if PORTE.1 = 0 then INPUTS3.2 = 0 ;J4-5
+    if PORTE.0 = 0 then INPUTS3.4 = 0 ;J4-7
+    if PORTE.3 = 0 then INPUTS3.6 = 0 ;J4-9
+
+return
+
+' ************************************************************
+' * 1                           *
+' ************************************************************
+READANALOG:
+    LOW PORTA.2
+    LOW PORTA.3
+    ADCIN 0, aninput0     
+    ADCIN 1, aninput1
+    aninput0=aninput0>>2
+    aninput1=aninput1>>2
+    
+    ANALOG0=aninput0
+    ANALOG1=aninput1
+    
+    HIGH PORTA.2
+    LOW PORTA.3    
+    ADCIN 0, aninput0     
+    ADCIN 1, aninput1
+    aninput0=aninput0>>2
+    aninput1=aninput1>>2
+    
+    ANALOG2=aninput0
+    ANALOG3=aninput1
+
+    LOW PORTA.2
+    HIGH PORTA.3
+    ADCIN 0, aninput0     
+    ADCIN 1, aninput1
+    aninput0=aninput0>>2
+    aninput1=aninput1>>2
+    
+    ANALOG4=aninput0
+    ANALOG5=aninput1
+    
+    HIGH PORTA.2
+    HIGH PORTA.3
+    ADCIN 0, aninput0     
+    ADCIN 1, aninput1
+    aninput0=aninput0>>2
+    aninput1=aninput1>>2
+    
+    ANALOG6=aninput0
+    ANALOG7=aninput1
+   
+RETURN
+' ************************************************************
+' * receive data from the USB bus                            *
+' ************************************************************
+WOUT:
+    high portd.0
+    high portd.1
+    Shiftout  portd.3 , portd.1, 5, [OUTPUTS2,OUTPUTS1,OUTPUTS0]
+    high portd.2
+    pauseus 2
+    low portd.2
+    pauseus 360
+return
+
+' ************************************************************
+' * receive data from the USB bus                            *
+' ************************************************************
+DoUSBIn:
+    USBBufferCount = USBBufferSizeRX              ' RX buffer size
+    USBService                                    ' keep connection alive
+    USBIn 2, USBBuffer, USBBufferCount, DoUSBIn   ' read data, if available
+        
+    if BUFFIN0 <> USBBuffer[0]then
+        INARC=1
+        BUFFIN0=USBBuffer[0]
+    endif
+    
+    if BUFFIN1 <> USBBuffer[1] then
+        inarc=1
+        BUFFIN1=USBBuffer[1]
+    endif
+    
+    if BUFFIN2 <> USBBuffer[2] then
+        inarc=1
+        BUFFIN2=USBBuffer[2]
+    endif
+    
+    USBBuffer[0]=0
+    USBBuffer[1]=0
+    USBBuffer[2]=0
+    USBBuffer[3]=0
+    USBBuffer[4]=0
+    USBBuffer[5]=0
+    USBBuffer[6]=0
+    USBBuffer[7]=0
+    if OPERATE=1 then Toggle porta.6                                ' Message received
+return
+    
+' ************************************************************
+' * wait for USB interface to attach                         *
+' ************************************************************
+DoUSBOut:
+    USBBufferCount = USBBufferSizeTX              ' TX buffer size 
+    USBService                                    ' keep connection alive
+    USBOut 1, USBBuffer, USBBufferCount, DoUSBOut ' if bus available, transmit data
+    USBBuffer[0]=0
+    USBBuffer[1]=0
+    USBBuffer[2]=0
+    USBBuffer[3]=0
+    USBBuffer[4]=0
+    USBBuffer[5]=0
+    USBBuffer[6]=0
+    USBBuffer[7]=0
+    Toggle porta.6                                ' Message received
+return
+
+' ************************************************************
+' * 1*
+' ************************************************************
+READ485:
+return
+
+' ************************************************************
+' * 1                    *
+' ************************************************************
+WRITE485:
+return
+
+' ************************************************************
+' * receive data from the USB bus                            *
+' ************************************************************
+DoUSBIn2:
+    USBBufferCount = USBBufferSizeRX              ' RX buffer size
+    USBService                                    ' keep connection alive
+    USBIn 2, USBBuffer, USBBufferCount, ARCUSB   ' read data, if available
+        
+    if usb_arc=1 then
+        ArCount=0
+        if BUFFIN0 <> USBBuffer[0]then
+            INARC=1
+            BUFFIN0=USBBuffer[0]
+        endif
+    
+        if BUFFIN1 <> USBBuffer[1] then
+            inarc=1
+            BUFFIN1=USBBuffer[1]
+        endif
+    
+        if BUFFIN2 <> USBBuffer[2] then
+            inarc=1
+            BUFFIN2=USBBuffer[2]
+        endif
+        usb_arc=0
+    endif
+    
+    if ArCount > 60000 then
+        asm
+            RESET
+        endasm
+    endif
+    USBBuffer[0]=0
+    USBBuffer[1]=0
+    USBBuffer[2]=0
+    USBBuffer[3]=0
+    USBBuffer[4]=0
+    USBBuffer[5]=0
+    USBBuffer[6]=0
+    USBBuffer[7]=0
+return
+
+ARCUSB:
+    usb_arc=1
+    ArCount=ArCount+1
+return
